@@ -1,0 +1,35 @@
+name: Bitcoin Technical Analysis
+
+on:
+  schedule:
+    # Her saat başı çalışır (UTC saat)
+    - cron: '0 * * * *'
+  
+  # Manuel tetikleme için
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run analysis
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        python qwen3.py
+        echo "✅ Analysis completed successfully!"
