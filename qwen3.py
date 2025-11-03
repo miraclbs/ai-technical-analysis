@@ -90,13 +90,25 @@ def save_to_supabase(data: dict, table_name: str = "btc_analysis") -> dict:
     Returns:
         Supabase'den dönen response
     """
+    import sys
+    print(f"🔄 Supabase bağlantısı kuruluyor...", flush=True)
+    sys.stdout.flush()
+    
     supabase = get_supabase_client()
+    print(f"✅ Supabase bağlantısı başarılı!", flush=True)
+    sys.stdout.flush()
     
     # Önce tabloyu temizle
+    print(f"🗑️  '{table_name}' tablosu temizleniyor...", flush=True)
+    sys.stdout.flush()
     clear_table(table_name)
     
     # Yeni veriyi kaydet
+    print(f"💾 Yeni veri '{table_name}' tablosuna kaydediliyor...", flush=True)
+    sys.stdout.flush()
     response = supabase.table(table_name).insert(data).execute()
+    print(f"✅ Veri başarıyla kaydedildi! Kayıt sayısı: {len(response.data) if response.data else 0}", flush=True)
+    sys.stdout.flush()
     
     return response
 
