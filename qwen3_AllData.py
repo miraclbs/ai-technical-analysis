@@ -216,8 +216,7 @@ def format_data(df, last_n):
         tr_time = ts + pd.Timedelta(hours=3)
         
         candles.append({
-            "timestamp_utc": ts.isoformat(),
-            "timestamp_tr": tr_time.strftime("%Y-%m-%d %H:%M:%S") + " (TR)",
+            "timestamp": tr_time.strftime("%Y-%m-%d %H:%M:%S"),
             "open": _f(row["open"]),
             "high": _f(row["high"]),
             "low": _f(row["low"]),
