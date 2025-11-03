@@ -258,7 +258,6 @@ def main():
     result = {
         "symbol": symbol,
         "as_of_utc": datetime.now(timezone.utc).isoformat(),
-        "description": "Bitcoin ham OHLCV verileri ve teknik indikatörler",
         "timeframes": {}
     }
 
