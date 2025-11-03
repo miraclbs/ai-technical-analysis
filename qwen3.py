@@ -190,23 +190,27 @@ def fetch_ohlcv(symbol: str, timeframe: str, need: int) -> pd.DataFrame:
     
     # Birden fazla exchange dene (Binance bazı lokasyonları engelliyor)
     exchanges_to_try = [
-        ("binance", {"options": {"defaultType": "future"}, "enableRateLimit": True}),
-        ("bybit", {"options": {"defaultType": "linear"}, "enableRateLimit": True}),
-        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True})
+        ("binance", {"options": {"defaultType": "future"}, "enableRateLimit": True}, "BTC/USDT:USDT"),
+        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True}, "BTC/USDT:USDT"),
+        ("bybit", {"enableRateLimit": True}, "BTC/USDT"),  # Bybit için spot market
+        ("kraken", {"enableRateLimit": True}, "BTC/USDT"),
+        ("kucoin", {"enableRateLimit": True}, "BTC/USDT")
     ]
     
     last_error = None
-    for exchange_id, config in exchanges_to_try:
+    for exchange_id, config, sym in exchanges_to_try:
         try:
+            print(f"🔄 {exchange_id} deneniyor...", flush=True)
             ex = getattr(ccxt, exchange_id)(config)
-            rows = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=buffer)
+            rows = ex.fetch_ohlcv(sym, timeframe=timeframe, limit=buffer)
             df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
             df.set_index("timestamp", inplace=True)
+            print(f"✅ {exchange_id} başarılı!", flush=True)
             return df
         except Exception as e:
             last_error = e
-            print(f"⚠️ {exchange_id} failed: {str(e)[:100]}")
+            print(f"⚠️ {exchange_id} failed: {str(e)[:150]}", flush=True)
             continue
     
     # Hiçbiri çalışmazsa hata fırlat

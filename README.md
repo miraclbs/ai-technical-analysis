@@ -35,8 +35,8 @@ AI-ready Bitcoin (BTCUSDT) teknik analiz motoru. Binance Futures'dan canlı veri
 
 ### 1. Repository'yi Klonlayın
 ```bash
-git clone https://github.com/KULLANICI_ADINIZ/qwen3-analiz-py.git
-cd qwen3-analiz-py
+git clone https://github.com/miraclbs/ai-technical-analysis.git
+cd ai-technical-analysis
 ```
 
 ### 2. Virtual Environment Oluşturun (Opsiyonel)
