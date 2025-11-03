@@ -247,25 +247,44 @@ def format_data(df, last_n):
 # === ANA === #
 def main():
     symbol = "BTC/USDT:USDT"  # Binance Futures sembolü (BTCUSDT.P)
-    timeframes = {
-        "4h": 20,
-        "1h": 30,
-        "15m": 40
-    }
+    
+    # Sıralı timeframe tanımları
+    timeframes = [
+        {"tf": "4h", "count": 20, "duration": "3.3 gün (80 saat)"},
+        {"tf": "1h", "count": 30, "duration": "1.25 gün (30 saat)"},
+        {"tf": "15m", "count": 40, "duration": "10 saat"}
+    ]
 
     result = {
         "symbol": symbol,
         "as_of_utc": datetime.now(timezone.utc).isoformat(),
+        "description": "Bitcoin ham OHLCV verileri ve teknik indikatörler",
         "timeframes": {}
     }
 
-    for tf, n in timeframes.items():
+    # Timeframe'leri sırayla işle
+    for tf_info in timeframes:
+        tf = tf_info["tf"]
+        n = tf_info["count"]
+        duration = tf_info["duration"]
+        
+        print(f"\n🔄 {tf} timeframe ({n} mum - {duration}) işleniyor...")
+        
         df = get_ohlcv_df(symbol, tf, limit=n)
         df = add_indicators(df)
         candles = format_data(df, last_n=n)
-        result["timeframes"][tf] = candles
+        
+        result["timeframes"][tf] = {
+            "timeframe": tf,
+            "candle_count": n,
+            "duration": duration,
+            "data": candles
+        }
 
     # JSON çıktısı
+    print("\n" + "="*60)
+    print("📊 HAM VERİ SONUÇLARI")
+    print("="*60)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
     # Dosyaya kaydet
@@ -278,6 +297,12 @@ def main():
         response = save_to_supabase(result)
         print("✅ Veri Supabase'e başarıyla kaydedildi!")
         print(f"📝 Kayıt ID: {response.data[0]['id'] if response.data else 'N/A'}")
+    except ValueError as e:
+        print(f"\n⚠️ Supabase bağlantı hatası: {e}")
+        print("Veri sadece dosyaya kaydedildi.")
+    except Exception as e:
+        print(f"\n❌ Supabase kayıt hatası: {e}")
+        print("Veri sadece dosyaya kaydedildi.")
     except ValueError as e:
         print(f"\n⚠️ Supabase bağlantı hatası: {e}")
         print("Veri sadece dosyaya kaydedildi.")
