@@ -175,12 +175,30 @@ def _float(x):
 def fetch_ohlcv(symbol: str, timeframe: str, need: int) -> pd.DataFrame:
     """İndikatörler için yeterli geçmişi almak adına ekstra buffer çeker."""
     buffer = max(210, need + 200)  # SMA200/EMA200 için güvenli buffer
-    ex = ccxt.binance({"options": {"defaultType": "future"}, "enableRateLimit": True})
-    rows = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=buffer)
-    df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    df.set_index("timestamp", inplace=True)
-    return df
+    
+    # Birden fazla exchange dene (Binance bazı lokasyonları engelliyor)
+    exchanges_to_try = [
+        ("binance", {"options": {"defaultType": "future"}, "enableRateLimit": True}),
+        ("bybit", {"options": {"defaultType": "linear"}, "enableRateLimit": True}),
+        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True})
+    ]
+    
+    last_error = None
+    for exchange_id, config in exchanges_to_try:
+        try:
+            ex = getattr(ccxt, exchange_id)(config)
+            rows = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=buffer)
+            df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            df.set_index("timestamp", inplace=True)
+            return df
+        except Exception as e:
+            last_error = e
+            print(f"⚠️ {exchange_id} failed: {str(e)[:100]}")
+            continue
+    
+    # Hiçbiri çalışmazsa hata fırlat
+    raise Exception(f"Tüm exchange'ler başarısız oldu. Son hata: {last_error}")
 
 def enrich_indicators(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()

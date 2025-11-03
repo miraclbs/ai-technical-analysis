@@ -141,15 +141,29 @@ def detect_pattern(row):
 
 # === VERİ ÇEKME === #
 def get_ohlcv_df(symbol, timeframe, limit):
-    exchange = ccxt.binance({
-        "options": {"defaultType": "future"},  # Binance Futures
-        "enableRateLimit": True
-    })
-    data = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit + 200)  # indikatör hesaplaması için fazladan veriler
-    df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    df.set_index("timestamp", inplace=True)
-    return df
+    # Birden fazla exchange dene (Binance bazı lokasyonları engelliyor)
+    exchanges_to_try = [
+        ("binance", {"options": {"defaultType": "future"}, "enableRateLimit": True}),
+        ("bybit", {"options": {"defaultType": "linear"}, "enableRateLimit": True}),
+        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True})
+    ]
+    
+    last_error = None
+    for exchange_id, config in exchanges_to_try:
+        try:
+            exchange = getattr(ccxt, exchange_id)(config)
+            data = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit + 200)
+            df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            df.set_index("timestamp", inplace=True)
+            return df
+        except Exception as e:
+            last_error = e
+            print(f"⚠️ {exchange_id} failed: {str(e)[:100]}")
+            continue
+    
+    # Hiçbiri çalışmazsa hata fırlat
+    raise Exception(f"Tüm exchange'ler başarısız oldu. Son hata: {last_error}")
 
 
 def add_indicators(df):
