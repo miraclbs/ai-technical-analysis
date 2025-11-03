@@ -49,20 +49,20 @@ jobs:
         python qwen3.py
         echo "✅ Gelişmiş analiz tamamlandı!"
     
-    - name: Run Raw Data Collection
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      run: |
-        echo "🔄 Ham veri toplama başlatılıyor (qwen3_AllData.py)..."
-        python qwen3_AllData.py
-        echo "✅ Ham veri toplama tamamlandı!"
+    # Manuel olarak etkinleştirilebilir - qwen3_AllData.py
+    # - name: Run Raw Data Collection
+    #   env:
+    #     SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+    #     SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    #   run: |
+    #     echo "🔄 Ham veri toplama başlatılıyor (qwen3_AllData.py)..."
+    #     python qwen3_AllData.py
+    #     echo "✅ Ham veri toplama tamamlandı!"
     
     - name: Summary
       run: |
         echo "=========================================="
-        echo "✅ Tüm analizler başarıyla tamamlandı!"
+        echo "✅ Analiz başarıyla tamamlandı!"
         echo "📊 btc_analysis tablosu güncellendi"
-        echo "📦 btc_raw_data tablosu güncellendi"
         echo "🕐 Saat: $(date)"
         echo "=========================================="

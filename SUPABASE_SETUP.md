@@ -1,6 +1,6 @@
 # Supabase Kurulum Rehberi
 
-Bu kod, Bitcoin analiz verilerini Supabase veritabanına otomatik olarak kaydeder.
+Bu kod, çoklu kripto para analiz verilerini Supabase veritabanına otomatik olarak kaydeder. Her coin için ayrı tablo oluşturulur.
 
 ## 1. Supabase Projesi Oluşturma
 
@@ -8,25 +8,80 @@ Bu kod, Bitcoin analiz verilerini Supabase veritabanına otomatik olarak kaydede
 2. "New Project" butonuna tıklayın
 3. Proje bilgilerinizi girin ve projeyi oluşturun
 
-## 2. Veritabanı Tablosu Oluşturma
+## 2. Veritabanı Tablolarını Oluşturma
 
-Supabase Dashboard'da **SQL Editor** bölümüne gidin ve şu SQL komutunu çalıştırın:
+Supabase Dashboard'da **SQL Editor** bölümüne gidin ve şu SQL komutlarını çalıştırın:
+
+### Opsiyon 1: Otomatik Tablo Oluşturma Fonksiyonu (ÖNERİLEN)
+
+Bu fonksiyon, yeni coinler için otomatik olarak tablo oluşturur:
 
 ```sql
--- BTC analiz verileri için tablo
+-- Dinamik tablo oluşturma fonksiyonu
+CREATE OR REPLACE FUNCTION create_coin_analysis_table(coin_name TEXT)
+RETURNS void AS $$
+DECLARE
+    table_name TEXT := coin_name || '_analysis';
+BEGIN
+    -- Tablo yoksa oluştur
+    IF NOT EXISTS (
+        SELECT FROM pg_tables 
+        WHERE schemaname = 'public' 
+        AND tablename = table_name
+    ) THEN
+        EXECUTE format('
+            CREATE TABLE %I (
+                id BIGSERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                as_of_utc TIMESTAMP WITH TIME ZONE NOT NULL,
+                market_info JSONB,
+                timeframes JSONB NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+            
+            CREATE INDEX idx_%I_as_of ON %I(as_of_utc DESC);
+            CREATE INDEX idx_%I_symbol ON %I(symbol);
+            
+            ALTER TABLE %I ENABLE ROW LEVEL SECURITY;
+            
+            CREATE POLICY "Enable read access for all users" ON %I
+                FOR SELECT USING (true);
+            
+            CREATE POLICY "Enable insert for authenticated users only" ON %I
+                FOR INSERT WITH CHECK (true);
+        ', table_name, table_name, table_name, table_name, table_name, table_name, table_name, table_name);
+        
+        RAISE NOTICE 'Tablo % oluşturuldu', table_name;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Popüler coinler için tabloları oluştur
+SELECT create_coin_analysis_table('btc');
+SELECT create_coin_analysis_table('eth');
+SELECT create_coin_analysis_table('sol');
+SELECT create_coin_analysis_table('bnb');
+SELECT create_coin_analysis_table('xrp');
+```
+
+### Opsiyon 2: Manuel Tablo Oluşturma
+
+Her coin için ayrı ayrı tablo oluşturmak isterseniz:
+
+```sql
+-- BTC analiz tablosu
 CREATE TABLE btc_analysis (
     id BIGSERIAL PRIMARY KEY,
     symbol TEXT NOT NULL,
     as_of_utc TIMESTAMP WITH TIME ZONE NOT NULL,
+    market_info JSONB,
     timeframes JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Hızlı sorgulama için index
 CREATE INDEX idx_btc_analysis_as_of ON btc_analysis(as_of_utc DESC);
 CREATE INDEX idx_btc_analysis_symbol ON btc_analysis(symbol);
 
--- RLS (Row Level Security) politikası - herkese okuma izni
 ALTER TABLE btc_analysis ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Enable read access for all users" ON btc_analysis
@@ -34,6 +89,9 @@ CREATE POLICY "Enable read access for all users" ON btc_analysis
 
 CREATE POLICY "Enable insert for authenticated users only" ON btc_analysis
     FOR INSERT WITH CHECK (true);
+
+-- ETH, SOL, BNB, XRP için aynı yapıyı tekrarlayın
+-- (btc_analysis yerine eth_analysis, sol_analysis, vb. kullanın)
 ```
 
 ## 3. API Anahtarlarını Alma

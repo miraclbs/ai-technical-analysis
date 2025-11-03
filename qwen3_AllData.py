@@ -4,9 +4,9 @@
 """
 crypto_data_multi_tf.py
 BTCUSDT.P (Binance Futures) için:
-4H: son 20 mum
-1H: son 30 mum
-15M: son 40 mum
+4H: son 100 mum
+1H: son 150 mum
+15M: son 200 mum
 Her mumda OHLCV + SMA/EMA(50/100/200) + RSI(14) + MACD(12/26/9) + ATR(14) + OBV + change_pct + trend flags + candle pattern
 Veriler JSON olarak döndürülür, analiz yapılmaz.
 """
@@ -250,9 +250,9 @@ def main():
     
     # Sıralı timeframe tanımları
     timeframes = [
-        {"tf": "4h", "count": 20, "duration": "3.3 gün (80 saat)"},
-        {"tf": "1h", "count": 30, "duration": "1.25 gün (30 saat)"},
-        {"tf": "15m", "count": 40, "duration": "10 saat"}
+        {"tf": "4h", "count": 100, "duration": "16.7 gün (400 saat)"},
+        {"tf": "1h", "count": 150, "duration": "6.25 gün (150 saat)"},
+        {"tf": "15m", "count": 200, "duration": "2.08 gün (50 saat)"}
     ]
 
     result = {

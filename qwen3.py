@@ -3,19 +3,21 @@
 
 """
 ai_ready_tech_engine.py
-BTCUSDT.P (Binance Futures) için AI-ready teknik analiz verisi üretir.
+Binance Futures'da BTC, ETH, SOL, BNB, XRP için AI-ready teknik analiz verisi üretir.
 
 Timeframes ve mum sayıları:
-- 4h: 20
-- 1h: 30
-- 15m: 40
+- 4h: 100
+- 1h: 150
+- 15m: 200
 
 Çıktı (her timeframe):
-- candles: Son N mum için OHLCV + SMA/EMA(50/100/200) + RSI(14) + MACD(12/26/9)
-           + ATR(14) + OBV + change_pct(%) + trend_flags + candle pattern
 - summary: key_levels (ATR bazlı zone & tüm seviyeler), indicators, patterns, metrics
+- last_candle: Son mumun OHLCV verisi ve kapanış süresi
 
 Not: Bu betik "analiz/öneri" üretmez; yalnızca modeli besleyecek veriyi JSON olarak hazırlar.
+Her coin için ayrı tablo oluşturulur: btc_analysis, eth_analysis, sol_analysis, bnb_analysis, xrp_analysis
+
+Analiz edilen coinler sabit listeden seçilir (BTC, ETH, SOL, BNB, XRP).
 """
 
 import json
@@ -160,20 +162,21 @@ def candle_pattern_row(o, h, l, c):
     return "normal"
 
 def detect_multi_bar_pattern(df_tail: pd.DataFrame):
-    """Basit morning/evening star tahmini (son 3 mum)."""
+    """Daha gerçekçi pattern tespiti"""
     if len(df_tail) < 3:
         return None
+    
+    # Trend kontrolü ekle
+    trend = "downtrend" if df_tail["close"].iloc[-5:].is_monotonic_decreasing else "uptrend"
+    
     o1, h1, l1, c1 = df_tail.iloc[-3][["open","high","low","close"]]
-    o2, h2, l2, c2 = df_tail.iloc[-2][["open","high","low","close"]]
+    o2, h2, l2, c2 = df_tail.iloc[-2][["open","high","low","close"]] 
     o3, h3, l3, c3 = df_tail.iloc[-1][["open","high","low","close"]]
 
-    # Morning star (downtrend sonrası varsaymaz, yalın form)
-    cond_morning = (c1 < o1) and (abs(c2 - o2) / max(h2 - l2, 1e-9) < 0.3) and (c3 > o3) and (c3 > (o1 + c1)/2)
-    if cond_morning:
+    # Trend bağlamı ekle
+    if trend == "downtrend" and (c1 < o1) and (abs(c2 - o2) / max(h2 - l2, 1e-9) < 0.3) and (c3 > o3):
         return "morning_star"
-    # Evening star
-    cond_evening = (c1 > o1) and (abs(c2 - o2) / max(h2 - l2, 1e-9) < 0.3) and (c3 < o3) and (c3 < (o1 + c1)/2)
-    if cond_evening:
+    if trend == "uptrend" and (c1 > o1) and (abs(c2 - o2) / max(h2 - l2, 1e-9) < 0.3) and (c3 < o3):
         return "evening_star"
     return None
 
@@ -264,6 +267,7 @@ def get_market_info(exchange, symbol: str) -> dict:
 
 def get_last_candle_info(df: pd.DataFrame, timeframe: str) -> dict:
     """
+    Daha doğru zaman senkronizasyonu
     Son mumun detaylı bilgilerini döndürür.
     
     Args:
@@ -288,8 +292,18 @@ def get_last_candle_info(df: pd.DataFrame, timeframe: str) -> dict:
     
     minutes = tf_minutes.get(timeframe, 60)
     next_candle = last_timestamp + pd.Timedelta(minutes=minutes)
-    now = pd.Timestamp.now(tz='UTC')
-    time_to_close = (next_candle - now).total_seconds()
+    
+    # Binance server time ile senkronize et
+    try:
+        exchange = ccxt.binance()
+        server_time = exchange.fetch_time()
+        server_dt = pd.Timestamp(server_time, unit='ms', tz='UTC')
+    except:
+        server_dt = pd.Timestamp.now(tz='UTC')
+    
+    # Zaman farkını dikkate al
+    time_diff = (server_dt - last_timestamp).total_seconds()
+    time_to_close = (next_candle - server_dt).total_seconds()
     
     return {
         "timestamp": last_timestamp.isoformat(),
@@ -300,7 +314,9 @@ def get_last_candle_info(df: pd.DataFrame, timeframe: str) -> dict:
         "volume": _float(last_row["volume"]),
         "next_candle_time": next_candle.isoformat(),
         "seconds_to_close": max(0, int(time_to_close)),
-        "minutes_to_close": max(0, round(time_to_close / 60, 1))
+        "minutes_to_close": max(0, round(time_to_close / 60, 1)),
+        "time_sync_offset": time_diff,
+        "is_current_candle": time_diff < tf_minutes.get(timeframe, 60) * 60
     }
 
 
@@ -308,36 +324,83 @@ def fetch_ohlcv_with_exchange(symbol: str, timeframe: str, need: int):
     """
     OHLCV verisini çeker ve kullanılan exchange'i döndürür.
     
+    Args:
+        symbol: Trading pair (örn: "BTC/USDT:USDT")
+        timeframe: Zaman dilimi
+        need: İstenen mum sayısı
+        
     Returns:
         (DataFrame, exchange_instance, used_symbol)
     """
     buffer = max(210, need + 200)
     
+    # Önce Binance Futures'ı dene
+    try:
+        print(f"🔄 Binance Futures ({symbol}) deneniyor...", flush=True)
+        ex = ccxt.binance({
+            "options": {"defaultType": "future"},
+            "enableRateLimit": True
+        })
+        rows = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=buffer)
+        df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        df.set_index("timestamp", inplace=True)
+        print(f"✅ Binance Futures başarılı!", flush=True)
+        return df, ex, symbol
+    except Exception as e:
+        print(f"⚠️ Binance Futures başarısız: {str(e)[:150]}", flush=True)
+    
+    # Fallback: Diğer exchange'leri dene
     exchanges_to_try = [
-        ("binance", {"options": {"defaultType": "future"}, "enableRateLimit": True}, "BTC/USDT:USDT"),
-        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True}, "BTC/USDT:USDT"),
-        ("bybit", {"enableRateLimit": True}, "BTC/USDT"),
-        ("kraken", {"enableRateLimit": True}, "BTC/USDT"),
-        ("kucoin", {"enableRateLimit": True}, "BTC/USDT")
+        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True}),
+        ("bybit", {"enableRateLimit": True}),
     ]
     
     last_error = None
-    for exchange_id, config, sym in exchanges_to_try:
+    for exchange_id, config in exchanges_to_try:
         try:
-            print(f"🔄 {exchange_id} deneniyor...", flush=True)
+            print(f"🔄 {exchange_id} ({symbol}) deneniyor...", flush=True)
             ex = getattr(ccxt, exchange_id)(config)
-            rows = ex.fetch_ohlcv(sym, timeframe=timeframe, limit=buffer)
+            rows = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=buffer)
             df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
             df.set_index("timestamp", inplace=True)
             print(f"✅ {exchange_id} başarılı!", flush=True)
-            return df, ex, sym
+            return df, ex, symbol
         except Exception as e:
             last_error = e
             print(f"⚠️ {exchange_id} failed: {str(e)[:150]}", flush=True)
             continue
     
-    raise Exception(f"Tüm exchange'ler başarısız oldu. Son hata: {last_error}")
+    raise Exception(f"{symbol} için tüm exchange'ler başarısız oldu. Son hata: {last_error}")
+
+
+# =========================
+#     TRADING PAIRS CONFIG
+# =========================
+def get_trading_pairs() -> list:
+    """
+    Analiz edilecek sabit kripto para paritelerini döndürür.
+    
+    Returns:
+        Analiz edilecek coin listesi
+    """
+    pairs = [
+        "BTC/USDT:USDT",  # Bitcoin
+        "ETH/USDT:USDT",  # Ethereum
+        "SOL/USDT:USDT",  # Solana
+        "BNB/USDT:USDT",  # Binance Coin
+        "XRP/USDT:USDT"   # Ripple
+    ]
+    
+    print(f"\n📊 Analiz Edilecek {len(pairs)} Coin:")
+    print("=" * 70)
+    for i, pair in enumerate(pairs, 1):
+        coin_name = pair.split('/')[0]
+        print(f"{i}. {pair:20} ({coin_name})")
+    print("=" * 70)
+    
+    return pairs
 
 
 # =========================
@@ -350,21 +413,34 @@ def fetch_ohlcv(symbol: str, timeframe: str, need: int) -> pd.DataFrame:
     """İndikatörler için yeterli geçmişi almak adına ekstra buffer çeker."""
     buffer = max(210, need + 200)  # SMA200/EMA200 için güvenli buffer
     
-    # Birden fazla exchange dene (Binance bazı lokasyonları engelliyor)
+    # Önce Binance Futures'ı dene
+    try:
+        print(f"🔄 Binance Futures ({symbol}) deneniyor...", flush=True)
+        ex = ccxt.binance({
+            "options": {"defaultType": "future"},
+            "enableRateLimit": True
+        })
+        rows = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=buffer)
+        df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        df.set_index("timestamp", inplace=True)
+        print(f"✅ Binance Futures başarılı!", flush=True)
+        return df
+    except Exception as e:
+        print(f"⚠️ Binance Futures başarısız: {str(e)[:150]}", flush=True)
+    
+    # Fallback: Diğer exchange'leri dene
     exchanges_to_try = [
-        ("binance", {"options": {"defaultType": "future"}, "enableRateLimit": True}, "BTC/USDT:USDT"),
-        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True}, "BTC/USDT:USDT"),
-        ("bybit", {"enableRateLimit": True}, "BTC/USDT"),  # Bybit için spot market
-        ("kraken", {"enableRateLimit": True}, "BTC/USDT"),
-        ("kucoin", {"enableRateLimit": True}, "BTC/USDT")
+        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True}),
+        ("bybit", {"enableRateLimit": True}),
     ]
     
     last_error = None
-    for exchange_id, config, sym in exchanges_to_try:
+    for exchange_id, config in exchanges_to_try:
         try:
-            print(f"🔄 {exchange_id} deneniyor...", flush=True)
+            print(f"🔄 {exchange_id} ({symbol}) deneniyor...", flush=True)
             ex = getattr(ccxt, exchange_id)(config)
-            rows = ex.fetch_ohlcv(sym, timeframe=timeframe, limit=buffer)
+            rows = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=buffer)
             df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
             df.set_index("timestamp", inplace=True)
@@ -376,7 +452,7 @@ def fetch_ohlcv(symbol: str, timeframe: str, need: int) -> pd.DataFrame:
             continue
     
     # Hiçbiri çalışmazsa hata fırlat
-    raise Exception(f"Tüm exchange'ler başarısız oldu. Son hata: {last_error}")
+    raise Exception(f"{symbol} için tüm exchange'ler başarısız oldu. Son hata: {last_error}")
 
 def enrich_indicators(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
@@ -593,34 +669,29 @@ def patterns_summary(df_tail: pd.DataFrame):
     }
 
 def metrics_summary(df_tail: pd.DataFrame):
-    if len(df_tail) < 5:
+    """Daha doğru momentum hesaplaması"""
+    if len(df_tail) < 10:
         return {"trend_slope": None, "momentum_strength": None, "volume_anomaly": None}
 
-    N = min(20, len(df_tail))
-    close_change = float(df_tail["close"].iloc[-1] - df_tail["close"].iloc[-N])
-    atr_now = float(df_tail["atr14"].iloc[-1]) if df_tail["atr14"].notna().any() else float((df_tail["high"]-df_tail["low"]).mean())
-    slope = atan(close_change / max(N * atr_now, 1e-9))  # ATR ölçekli eğim
-
-    # Momentum: RSI eğimi + MACD hist değişimi
-    rsi_vals = df_tail["rsi14"].tail(N).dropna()
-    macd_hist = df_tail["macd_hist"].tail(N).dropna()
-    mom = None
-    if len(rsi_vals) >= 2 and len(macd_hist) >= 2:
-        rsi_up = rsi_vals.iloc[-1] - rsi_vals.iloc[0]
-        hist_up = macd_hist.iloc[-1] - macd_hist.iloc[0]
-        if rsi_up > 0 and hist_up > 0:
-            mom = "rising"
-        elif rsi_up < 0 and hist_up < 0:
-            mom = "falling"
-        else:
-            mom = "mixed"
-
-    # Hacim anomalisi
-    last_vol = float(df_tail["volume"].iloc[-1])
-    avg_vol = float(df_tail["volume"].mean())
-    vol_anom = "yes" if last_vol > 1.5 * avg_vol else "no"
-
-    return {"trend_slope": float(slope), "momentum_strength": mom, "volume_anomaly": vol_anom}
+    # Price momentum + Volume momentum birleştir
+    price_change = (df_tail["close"].iloc[-1] - df_tail["close"].iloc[-10]) / df_tail["close"].iloc[-10]
+    volume_change = (df_tail["volume"].iloc[-5:].mean() - df_tail["volume"].iloc[-10:-5].mean()) / df_tail["volume"].iloc[-10:-5].mean()
+    
+    # Kombine momentum
+    combined_momentum = price_change * 0.7 + volume_change * 0.3
+    
+    if combined_momentum > 0.02:
+        mom = "rising"
+    elif combined_momentum < -0.02:
+        mom = "falling" 
+    else:
+        mom = "mixed"
+        
+    return {
+        "trend_slope": float(combined_momentum),
+        "momentum_strength": mom,
+        "volume_anomaly": "yes" if abs(volume_change) > 0.5 else "no"
+    }
 
 def enhanced_trend_analysis(df_tail: pd.DataFrame):
     """Gelişmiş trend analizi - farklı dönemlerde trend gücü."""
@@ -795,10 +866,21 @@ def timeframe_summary(df: pd.DataFrame, last_n: int):
 # =========================
 #          MAIN
 # =========================
-def main():
-    symbol = "BTC/USDT:USDT"
-    config = {"4h": 100, "1h": 150, "15m": 200}
-
+def analyze_coin(symbol: str, config: dict) -> dict:
+    """
+    Tek bir coin için tüm timeframe'lerde analiz yapar.
+    
+    Args:
+        symbol: Trading pair (örn: "BTC/USDT:USDT")
+        config: Timeframe konfigürasyonu (örn: {"4h": 100, "1h": 150, "15m": 200})
+    
+    Returns:
+        Analiz sonuçları dict
+    """
+    print(f"\n{'='*70}")
+    print(f"📊 {symbol} ANALİZİ BAŞLIYOR")
+    print(f"{'='*70}")
+    
     # İlk timeframe'de market bilgilerini al
     first_tf = list(config.keys())[0]
     df_first, exchange_first, symbol_first = fetch_ohlcv_with_exchange(symbol, first_tf, config[first_tf])
@@ -807,7 +889,7 @@ def main():
     out = {
         "symbol": symbol,
         "as_of_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "market_info": market_info,  # YENİ: Piyasa bilgileri
+        "market_info": market_info,
         "timeframes": {}
     }
 
@@ -822,30 +904,110 @@ def main():
         
         df = enrich_indicators(df)
         summary = timeframe_summary(df, last_n=need)
-        last_candle = get_last_candle_info(df, tf)  # YENİ: Son mum bilgileri
+        last_candle = get_last_candle_info(df, tf)
 
         out["timeframes"][tf] = {
-            "last_candle": last_candle,  # YENİ: Son mum OHLCV
+            "last_candle": last_candle,
             "summary": summary
         }
-
-    # JSON çıktısını göster
-    print("\n" + "="*60)
-    print("📊 ANALİZ SONUÇLARI")
-    print("="*60)
-    print(json.dumps(out, indent=2, ensure_ascii=False))
     
-    # Supabase'e kaydet
-    try:
-        response = save_to_supabase(out)
-        print("\n✅ Veri Supabase'e başarıyla kaydedildi!")
-        print(f"📝 Kayıt ID: {response.data[0]['id'] if response.data else 'N/A'}")
-    except ValueError as e:
-        print(f"\n⚠️ Supabase bağlantı hatası: {e}")
-        print("Veri sadece console'a yazdırıldı.")
-    except Exception as e:
-        print(f"\n❌ Supabase kayıt hatası: {e}")
-        print("Veri sadece console'a yazdırıldı.")
+    return out
+
+
+def main():
+    """
+    Ana fonksiyon: Sabit 5 USDT paritesi (BTC, ETH, SOL, BNB, XRP) için analiz yapar ve 
+    her birini ayrı Supabase tablosuna kaydeder.
+    """
+    print("""
+╔═══════════════════════════════════════════════════════════════════╗
+║          ÇOKLU COİN TEKNİK ANALİZ MOTORU - V2.0                  ║
+║        Binance Futures - BTC, ETH, SOL, BNB, XRP Analizi         ║
+╚═══════════════════════════════════════════════════════════════════╝
+    """)
+    
+    # Timeframe konfigürasyonu
+    config = {"4h": 100, "1h": 150, "15m": 200}
+    
+    # Analiz edilecek pariteler (sabit liste)
+    trading_pairs = get_trading_pairs()
+    
+    print(f"\n🎯 Toplam {len(trading_pairs)} coin analiz edilecek\n")
+    
+    # Her coin için analiz yap
+    results = []
+    for i, symbol in enumerate(trading_pairs, 1):
+        try:
+            print(f"\n{'#'*70}")
+            print(f"# {i}/{len(trading_pairs)} - {symbol} İŞLENİYOR")
+            print(f"{'#'*70}")
+            
+            # Analiz yap
+            analysis_data = analyze_coin(symbol, config)
+            
+            # JSON çıktısını göster (kısaltılmış)
+            print(f"\n📊 {symbol} ANALİZ SONUÇLARI (ÖZET):")
+            print(f"  └─ Fiyat: ${analysis_data['market_info'].get('current_price', 'N/A')}")
+            print(f"  └─ 24s Hacim: ${analysis_data['market_info'].get('volume_24h', 0):,.0f}")
+            print(f"  └─ Timeframe'ler: {', '.join(analysis_data['timeframes'].keys())}")
+            
+            # Tablo adını oluştur (BTC/USDT:USDT -> btc_analysis)
+            coin_name = symbol.split('/')[0].lower()  # BTC
+            table_name = f"{coin_name}_analysis"
+            
+            # Supabase'e kaydet
+            try:
+                print(f"\n💾 {table_name} tablosuna kaydediliyor...", flush=True)
+                response = save_to_supabase(analysis_data, table_name=table_name)
+                print(f"✅ {symbol} verisi '{table_name}' tablosuna kaydedildi!")
+                print(f"📝 Kayıt ID: {response.data[0]['id'] if response.data else 'N/A'}")
+                results.append({
+                    "symbol": symbol,
+                    "table": table_name,
+                    "status": "success"
+                })
+            except Exception as e:
+                print(f"❌ {symbol} Supabase kayıt hatası: {e}")
+                results.append({
+                    "symbol": symbol,
+                    "table": table_name,
+                    "status": "failed",
+                    "error": str(e)
+                })
+        
+        except Exception as e:
+            print(f"\n❌ {symbol} analiz hatası: {e}")
+            results.append({
+                "symbol": symbol,
+                "status": "failed",
+                "error": str(e)
+            })
+        
+        # Son coin değilse kısa bir bekleme
+        if i < len(trading_pairs):
+            import time
+            print(f"\n⏳ Sonraki coin için 2 saniye bekleniyor...")
+            time.sleep(2)
+    
+    # Final özet
+    print(f"\n\n{'='*70}")
+    print("📊 TÜM ANALİZLER TAMAMLANDI - ÖZET")
+    print(f"{'='*70}")
+    
+    success_count = sum(1 for r in results if r.get("status") == "success")
+    failed_count = len(results) - success_count
+    
+    print(f"\n✅ Başarılı: {success_count}/{len(results)}")
+    print(f"❌ Başarısız: {failed_count}/{len(results)}")
+    
+    print("\n📋 Detaylı Sonuçlar:")
+    for r in results:
+        status_icon = "✅" if r.get("status") == "success" else "❌"
+        table_info = f" → {r.get('table')}" if r.get('table') else ""
+        error_info = f" (Hata: {r.get('error', 'N/A')[:50]}...)" if r.get("status") == "failed" else ""
+        print(f"  {status_icon} {r['symbol']}{table_info}{error_info}")
+    
+    print(f"\n{'='*70}\n")
 
 
 if __name__ == "__main__":
