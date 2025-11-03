@@ -2,8 +2,9 @@ name: Bitcoin Technical Analysis
 
 on:
   schedule:
-    # Her saat başı çalışır (UTC saat)
-    - cron: '0 * * * *'
+    # Her saat başından 1 dakika sonra çalışır (UTC saat)
+    # Örnek: 00:01, 01:01, 02:01, 03:01, vb.
+    - cron: '1 * * * *'
   
   # Manuel tetikleme için
   workflow_dispatch:
@@ -26,10 +27,29 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    - name: Run analysis
+    - name: Run Advanced Analysis (Summary)
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
+        echo "🔄 Gelişmiş analiz başlatılıyor (qwen3.py)..."
         python qwen3.py
-        echo "✅ Analysis completed successfully!"
+        echo "✅ Gelişmiş analiz tamamlandı!"
+    
+    - name: Run Raw Data Collection
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        echo "🔄 Ham veri toplama başlatılıyor (qwen3_AllData.py)..."
+        python qwen3_AllData.py
+        echo "✅ Ham veri toplama tamamlandı!"
+    
+    - name: Summary
+      run: |
+        echo "=========================================="
+        echo "✅ Tüm analizler başarıyla tamamlandı!"
+        echo "📊 btc_analysis tablosu güncellendi"
+        echo "📦 btc_raw_data tablosu güncellendi"
+        echo "🕐 Saat: $(date)"
+        echo "=========================================="
