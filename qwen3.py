@@ -15,7 +15,9 @@ Timeframes ve mum sayıları:
 - last_candle: Son mumun OHLCV verisi ve kapanış süresi
 
 Not: Bu betik "analiz/öneri" üretmez; yalnızca modeli besleyecek veriyi JSON olarak hazırlar.
-Her coin için ayrı tablo oluşturulur: btc_analysis, eth_analysis, sol_analysis, bnb_analysis, xrp_analysis
+
+GÜNCELLEME: Artık tüm coinler tek bir tabloya (crypto_analysis) 5 satır olarak kaydedilir.
+Her çalıştırmada tablo temizlenir ve yeni veriler eklenir.
 
 Analiz edilen coinler sabit listeden seçilir (BTC, ETH, SOL, BNB, XRP).
 """
@@ -917,12 +919,14 @@ def analyze_coin(symbol: str, config: dict) -> dict:
 def main():
     """
     Ana fonksiyon: Sabit 5 USDT paritesi (BTC, ETH, SOL, BNB, XRP) için analiz yapar ve 
-    her birini ayrı Supabase tablosuna kaydeder.
+    tek bir tabloya (crypto_analysis) 5 satır olarak kaydeder.
+    Her çalıştırmada tablo temizlenir ve yeni veriler eklenir.
     """
     print("""
 ╔═══════════════════════════════════════════════════════════════════╗
 ║          ÇOKLU COİN TEKNİK ANALİZ MOTORU - V2.0                  ║
 ║        Binance Futures - BTC, ETH, SOL, BNB, XRP Analizi         ║
+║             TEK TABLO - 5 SATIR (crypto_analysis)                ║
 ╚═══════════════════════════════════════════════════════════════════╝
     """)
     
@@ -934,8 +938,18 @@ def main():
     
     print(f"\n🎯 Toplam {len(trading_pairs)} coin analiz edilecek\n")
     
-    # Her coin için analiz yap
+    # Tek tablo adı
+    table_name = "crypto_analysis"
+    
+    # İlk çalıştırmada tabloyu temizle
+    print(f"\n🗑️  '{table_name}' tablosu temizleniyor...")
+    clear_table(table_name)
+    print(f"✅ Tablo temizlendi, yeni veriler eklenecek.\n")
+    
+    # Her coin için analiz yap ve listeye ekle
+    all_analysis_data = []
     results = []
+    
     for i, symbol in enumerate(trading_pairs, 1):
         try:
             print(f"\n{'#'*70}")
@@ -951,29 +965,12 @@ def main():
             print(f"  └─ 24s Hacim: ${analysis_data['market_info'].get('volume_24h', 0):,.0f}")
             print(f"  └─ Timeframe'ler: {', '.join(analysis_data['timeframes'].keys())}")
             
-            # Tablo adını oluştur (BTC/USDT:USDT -> btc_analysis)
-            coin_name = symbol.split('/')[0].lower()  # BTC
-            table_name = f"{coin_name}_analysis"
-            
-            # Supabase'e kaydet
-            try:
-                print(f"\n💾 {table_name} tablosuna kaydediliyor...", flush=True)
-                response = save_to_supabase(analysis_data, table_name=table_name)
-                print(f"✅ {symbol} verisi '{table_name}' tablosuna kaydedildi!")
-                print(f"📝 Kayıt ID: {response.data[0]['id'] if response.data else 'N/A'}")
-                results.append({
-                    "symbol": symbol,
-                    "table": table_name,
-                    "status": "success"
-                })
-            except Exception as e:
-                print(f"❌ {symbol} Supabase kayıt hatası: {e}")
-                results.append({
-                    "symbol": symbol,
-                    "table": table_name,
-                    "status": "failed",
-                    "error": str(e)
-                })
+            # Veriyi listeye ekle
+            all_analysis_data.append(analysis_data)
+            results.append({
+                "symbol": symbol,
+                "status": "success"
+            })
         
         except Exception as e:
             print(f"\n❌ {symbol} analiz hatası: {e}")
@@ -989,6 +986,26 @@ def main():
             print(f"\n⏳ Sonraki coin için 2 saniye bekleniyor...")
             time.sleep(2)
     
+    # Tüm verileri tek seferde Supabase'e kaydet
+    if all_analysis_data:
+        try:
+            print(f"\n{'='*70}")
+            print(f"💾 {len(all_analysis_data)} coin verisi '{table_name}' tablosuna kaydediliyor...")
+            print(f"{'='*70}\n")
+            
+            supabase = get_supabase_client()
+            response = supabase.table(table_name).insert(all_analysis_data).execute()
+            
+            print(f"✅ Tüm veriler başarıyla kaydedildi!")
+            print(f"📝 Toplam kayıt sayısı: {len(response.data) if response.data else 0}")
+            
+        except Exception as e:
+            print(f"❌ Supabase toplu kayıt hatası: {e}")
+            for r in results:
+                if r.get("status") == "success":
+                    r["status"] = "failed"
+                    r["error"] = f"Supabase kayıt hatası: {e}"
+    
     # Final özet
     print(f"\n\n{'='*70}")
     print("📊 TÜM ANALİZLER TAMAMLANDI - ÖZET")
@@ -999,13 +1016,13 @@ def main():
     
     print(f"\n✅ Başarılı: {success_count}/{len(results)}")
     print(f"❌ Başarısız: {failed_count}/{len(results)}")
+    print(f"📊 Tablo: {table_name}")
     
     print("\n📋 Detaylı Sonuçlar:")
     for r in results:
         status_icon = "✅" if r.get("status") == "success" else "❌"
-        table_info = f" → {r.get('table')}" if r.get('table') else ""
         error_info = f" (Hata: {r.get('error', 'N/A')[:50]}...)" if r.get("status") == "failed" else ""
-        print(f"  {status_icon} {r['symbol']}{table_info}{error_info}")
+        print(f"  {status_icon} {r['symbol']}{error_info}")
     
     print(f"\n{'='*70}\n")
 
