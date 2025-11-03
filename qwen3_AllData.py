@@ -212,8 +212,12 @@ def format_data(df, last_n):
     tail = df.dropna().tail(last_n)
     candles = []
     for ts, row in tail.iterrows():
+        # UTC'den Türkiye saatine (UTC+3) çevir
+        tr_time = ts + pd.Timedelta(hours=3)
+        
         candles.append({
-            "timestamp": ts.isoformat(),
+            "timestamp_utc": ts.isoformat(),
+            "timestamp_tr": tr_time.strftime("%Y-%m-%d %H:%M:%S") + " (TR)",
             "open": _f(row["open"]),
             "high": _f(row["high"]),
             "low": _f(row["low"]),
