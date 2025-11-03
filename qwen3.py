@@ -179,6 +179,168 @@ def detect_multi_bar_pattern(df_tail: pd.DataFrame):
 
 
 # =========================
+#     MARKET DATA UTILS
+# =========================
+def get_market_info(exchange, symbol: str) -> dict:
+    """
+    Piyasa bilgilerini çeker: spread, likidite, komisyon vb.
+    
+    Args:
+        exchange: ccxt exchange instance
+        symbol: Trading pair sembolü
+    
+    Returns:
+        Market bilgileri dict
+    """
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        market = exchange.market(symbol)
+        
+        # Bid/Ask için orderbook'tan al
+        bid = ticker.get('bid')
+        ask = ticker.get('ask')
+        
+        # Eğer ticker'da yoksa orderbook'tan çek
+        if not bid or not ask:
+            try:
+                orderbook = exchange.fetch_order_book(symbol, limit=5)
+                bid = orderbook['bids'][0][0] if orderbook['bids'] else None
+                ask = orderbook['asks'][0][0] if orderbook['asks'] else None
+            except:
+                pass
+        
+        # Spread hesaplama
+        spread = None
+        spread_pct = None
+        if bid and ask:
+            spread = ask - bid
+            spread_pct = (spread / bid) * 100 if bid > 0 else None
+        
+        # Funding rate (futures için)
+        funding_rate = None
+        next_funding_time = None
+        try:
+            if market.get('type') in ['swap', 'future']:
+                if hasattr(exchange, 'fetch_funding_rate'):
+                    funding_info = exchange.fetch_funding_rate(symbol)
+                    funding_rate = funding_info.get('fundingRate')
+                    next_funding_time = funding_info.get('fundingTimestamp')
+                    if next_funding_time:
+                        next_funding_time = pd.Timestamp(next_funding_time, unit='ms', tz='UTC').isoformat()
+        except:
+            pass
+        
+        return {
+            "exchange": exchange.id,
+            "symbol_type": market.get('type', 'unknown'),  # spot, swap, future
+            "current_price": ticker.get('last'),
+            "bid": bid,
+            "ask": ask,
+            "spread": round(spread, 2) if spread else None,
+            "spread_percentage": round(spread_pct, 4) if spread_pct else None,
+            "volume_24h": ticker.get('quoteVolume'),
+            "taker_fee": round(market.get('taker', 0.001) * 100, 3),  # %
+            "maker_fee": round(market.get('maker', 0.001) * 100, 3),  # %
+            "funding_rate": round(funding_rate * 100, 4) if funding_rate else None,  # %
+            "next_funding_time": next_funding_time
+        }
+    except Exception as e:
+        print(f"⚠️ Market bilgisi alınamadı: {e}", flush=True)
+        return {
+            "exchange": exchange.id if exchange else "unknown",
+            "symbol_type": "unknown",
+            "current_price": None,
+            "bid": None,
+            "ask": None,
+            "spread": None,
+            "spread_percentage": None,
+            "volume_24h": None,
+            "taker_fee": None,
+            "maker_fee": None,
+            "funding_rate": None,
+            "next_funding_time": None
+        }
+
+
+def get_last_candle_info(df: pd.DataFrame, timeframe: str) -> dict:
+    """
+    Son mumun detaylı bilgilerini döndürür.
+    
+    Args:
+        df: OHLCV DataFrame
+        timeframe: Zaman dilimi (örn: "1h", "4h")
+    
+    Returns:
+        Son mum bilgileri
+    """
+    if df.empty:
+        return None
+    
+    last_row = df.iloc[-1]
+    last_timestamp = df.index[-1]
+    
+    # Timeframe'i dakikaya çevir
+    tf_minutes = {
+        "1m": 1, "5m": 5, "15m": 15, "30m": 30,
+        "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
+        "1d": 1440
+    }
+    
+    minutes = tf_minutes.get(timeframe, 60)
+    next_candle = last_timestamp + pd.Timedelta(minutes=minutes)
+    now = pd.Timestamp.now(tz='UTC')
+    time_to_close = (next_candle - now).total_seconds()
+    
+    return {
+        "timestamp": last_timestamp.isoformat(),
+        "open": _float(last_row["open"]),
+        "high": _float(last_row["high"]),
+        "low": _float(last_row["low"]),
+        "close": _float(last_row["close"]),
+        "volume": _float(last_row["volume"]),
+        "next_candle_time": next_candle.isoformat(),
+        "seconds_to_close": max(0, int(time_to_close)),
+        "minutes_to_close": max(0, round(time_to_close / 60, 1))
+    }
+
+
+def fetch_ohlcv_with_exchange(symbol: str, timeframe: str, need: int):
+    """
+    OHLCV verisini çeker ve kullanılan exchange'i döndürür.
+    
+    Returns:
+        (DataFrame, exchange_instance, used_symbol)
+    """
+    buffer = max(210, need + 200)
+    
+    exchanges_to_try = [
+        ("binance", {"options": {"defaultType": "future"}, "enableRateLimit": True}, "BTC/USDT:USDT"),
+        ("okx", {"options": {"defaultType": "swap"}, "enableRateLimit": True}, "BTC/USDT:USDT"),
+        ("bybit", {"enableRateLimit": True}, "BTC/USDT"),
+        ("kraken", {"enableRateLimit": True}, "BTC/USDT"),
+        ("kucoin", {"enableRateLimit": True}, "BTC/USDT")
+    ]
+    
+    last_error = None
+    for exchange_id, config, sym in exchanges_to_try:
+        try:
+            print(f"🔄 {exchange_id} deneniyor...", flush=True)
+            ex = getattr(ccxt, exchange_id)(config)
+            rows = ex.fetch_ohlcv(sym, timeframe=timeframe, limit=buffer)
+            df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            df.set_index("timestamp", inplace=True)
+            print(f"✅ {exchange_id} başarılı!", flush=True)
+            return df, ex, sym
+        except Exception as e:
+            last_error = e
+            print(f"⚠️ {exchange_id} failed: {str(e)[:150]}", flush=True)
+            continue
+    
+    raise Exception(f"Tüm exchange'ler başarısız oldu. Son hata: {last_error}")
+
+
+# =========================
 #       DATA UTILS
 # =========================
 def _float(x):
@@ -634,25 +796,36 @@ def timeframe_summary(df: pd.DataFrame, last_n: int):
 #          MAIN
 # =========================
 def main():
-    symbol = "BTC/USDT:USDT"  # Binance Futures sembolü (BTCUSDT.P)
-    # Daha fazla mum çubuğu analiz et
+    symbol = "BTC/USDT:USDT"
     config = {"4h": 100, "1h": 150, "15m": 200}
 
-    # Sadece summary için çıktı yapısı
+    # İlk timeframe'de market bilgilerini al
+    first_tf = list(config.keys())[0]
+    df_first, exchange_first, symbol_first = fetch_ohlcv_with_exchange(symbol, first_tf, config[first_tf])
+    market_info = get_market_info(exchange_first, symbol_first)
+    
     out = {
         "symbol": symbol,
         "as_of_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "market_info": market_info,  # YENİ: Piyasa bilgileri
         "timeframes": {}
     }
 
     for tf, need in config.items():
         print(f"\n🔄 {tf} timeframe analiz ediliyor... ({need} mum)")
-        df = fetch_ohlcv(symbol, tf, need=need)
+        
+        # Exchange bilgisi ile veri çek
+        if tf == first_tf:
+            df, exchange, used_symbol = df_first, exchange_first, symbol_first
+        else:
+            df, exchange, used_symbol = fetch_ohlcv_with_exchange(symbol, tf, need=need)
+        
         df = enrich_indicators(df)
         summary = timeframe_summary(df, last_n=need)
+        last_candle = get_last_candle_info(df, tf)  # YENİ: Son mum bilgileri
 
-        # Sadece summary'yi kaydet
         out["timeframes"][tf] = {
+            "last_candle": last_candle,  # YENİ: Son mum OHLCV
             "summary": summary
         }
 
