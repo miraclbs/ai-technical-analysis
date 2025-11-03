@@ -616,7 +616,7 @@ def get_market_info(exchange, symbol: str) -> dict:
             "ask": ask,
             "spread": round(spread, 2) if spread else None,
             "spread_percentage": round(spread_pct, 4) if spread_pct else None,
-            "volume_24h": ticker.get('quoteVolume'),
+            "volume_24h": ticker.get('quoteVolume') or ticker.get('baseVolume') or 0,
             "taker_fee": round(market.get('taker', 0.001) * 100, 3),  # %
             "maker_fee": round(market.get('maker', 0.001) * 100, 3),  # %
             "funding_rate": round(funding_rate * 100, 4) if funding_rate else None,  # %
@@ -1398,7 +1398,8 @@ def main():
             # JSON çıktısını göster (kısaltılmış)
             print(f"\n📊 {symbol} ANALİZ SONUÇLARI (ÖZET):")
             print(f"  └─ Fiyat: ${analysis_data['market_info'].get('current_price', 'N/A')}")
-            print(f"  └─ 24s Hacim: ${analysis_data['market_info'].get('volume_24h', 0):,.0f}")
+            volume_24h = analysis_data['market_info'].get('volume_24h') or 0
+            print(f"  └─ 24s Hacim: ${volume_24h:,.0f}")
             print(f"  └─ Timeframe'ler: {', '.join(analysis_data['timeframes'].keys())}")
             
             # Veriyi listeye ekle
