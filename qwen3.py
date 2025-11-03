@@ -215,25 +215,6 @@ def candle_pattern_row(o, h, l, c):
         return "shooting_star"
     return "normal"
 
-def detect_multi_bar_pattern(df_tail: pd.DataFrame):
-    """Daha gerçekçi pattern tespiti"""
-    if len(df_tail) < 3:
-        return None
-    
-    # Trend kontrolü ekle
-    trend = "downtrend" if df_tail["close"].iloc[-5:].is_monotonic_decreasing else "uptrend"
-    
-    o1, h1, l1, c1 = df_tail.iloc[-3][["open","high","low","close"]]
-    o2, h2, l2, c2 = df_tail.iloc[-2][["open","high","low","close"]] 
-    o3, h3, l3, c3 = df_tail.iloc[-1][["open","high","low","close"]]
-
-    # Trend bağlamı ekle
-    if trend == "downtrend" and (c1 < o1) and (abs(c2 - o2) / max(h2 - l2, 1e-9) < 0.3) and (c3 > o3):
-        return "morning_star"
-    if trend == "uptrend" and (c1 > o1) and (abs(c2 - o2) / max(h2 - l2, 1e-9) < 0.3) and (c3 < o3):
-        return "evening_star"
-    return None
-
 
 # =========================
 #  ADVANCED MARKET ANALYSIS
@@ -1066,32 +1047,15 @@ def volume_profile_summary(df_tail: pd.DataFrame):
 
 def patterns_summary(df_tail: pd.DataFrame):
     current = df_tail["pattern"].iloc[-1] if len(df_tail) else None
-    multi = detect_multi_bar_pattern(df_tail)
     recent_high = float(df_tail["high"].max()) if len(df_tail) else None
     recent_low  = float(df_tail["low"].min()) if len(df_tail) else None
 
-    # Breakout tespiti: son kapanış, son N en yüksek/düşüğün üstünde/altında mı?
-    breakout_direction = None
-    breakout_strength = None
-    if len(df_tail):
-        last_close = float(df_tail["close"].iloc[-1])
-        atr_now = float(df_tail["atr14"].iloc[-1]) if df_tail["atr14"].notna().any() else float((df_tail["high"]-df_tail["low"]).mean())
-        if last_close > recent_high:
-            breakout_direction = "up"
-            breakout_strength = "confirmed" if (last_close - recent_high) > 1.5 * atr_now / 100.0 * last_close else "weak"
-        elif last_close < recent_low:
-            breakout_direction = "down"
-            breakout_strength = "confirmed" if (recent_low - last_close) > 1.5 * atr_now / 100.0 * last_close else "weak"
-
-    confidence = "high" if current in ["hammer","shooting_star"] or multi in ["morning_star","evening_star"] else "medium"
+    confidence = "high" if current in ["hammer","shooting_star"] else "medium"
 
     return {
         "current_pattern": current,
-        "multi_bar_pattern": multi,
         "pattern_confidence": confidence,
-        "key_breakout_levels": [recent_high, recent_low],
-        "breakout_direction": breakout_direction,
-        "breakout_strength": breakout_strength
+        "key_breakout_levels": [recent_high, recent_low]
     }
 
 def metrics_summary(df_tail: pd.DataFrame):
