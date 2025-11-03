@@ -2,9 +2,9 @@ name: Bitcoin Technical Analysis
 
 on:
   schedule:
-    # Her saat başından 1 dakika sonra çalışır (UTC saat)
-    # Örnek: 00:01, 01:01, 02:01, 03:01, vb.
-    - cron: '1 * * * *'
+    # Her 20 dakikada bir çalışır (UTC saat)
+    # Örnek: 00:00, 00:20, 00:40, 01:00, 01:20, 01:40, vb.
+    - cron: '*/20 * * * *'
   
   # Manuel tetikleme için
   workflow_dispatch:
